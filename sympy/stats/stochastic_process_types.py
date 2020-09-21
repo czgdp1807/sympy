@@ -341,6 +341,8 @@ class MarkovProcess(StochasticProcess):
                         given_condition.atoms(RandomIndexedSymbol))
             if len(rand_var) == 1:
                 state_space = rand_var[0].pspace.set
+        if self.state2num:
+            state_space = FiniteSet(*[self.state2num.get(state, None) for state in state_space])
         if not FiniteSet(*[i for i in range(trans_probs.shape[0])]).is_subset(state_space):
             raise ValueError("state space is not compatible with the transition probabilites.")
         state_space = FiniteSet(*[i for i in range(trans_probs.shape[0])])
@@ -414,11 +416,22 @@ class MarkovProcess(StochasticProcess):
             trans_probs = mat
 
         if isinstance(condition, Relational):
+            if self.state2num:
+                left, right = condition.args
+                left = self.state2num.get(left, left)
+                right = self.state2num.get(right, right)
+                condition = type(condition)(left, right)
             rv, states = (list(condition.atoms(RandomIndexedSymbol))[0], condition.as_set())
             if isinstance(new_given_condition, And):
-                gcs = new_given_condition.args
+                gcs = list(new_given_condition.args)
             else:
-                gcs = (new_given_condition, )
+                gcs = [new_given_condition]
+            for i in range(len(gcs)):
+                if self.state2num and isinstance(gcs[i], Relational):
+                    left, right = gcs[i].args
+                    left = self.state2num.get(left, left)
+                    right = self.state2num.get(right, right)
+                    gcs[i] = type(gcs[i])(left, right)
             grvs = new_given_condition.atoms(RandomIndexedSymbol)
 
             min_key_rv = None
@@ -628,7 +641,12 @@ class DiscreteMarkovChain(DiscreteTimeStochasticProcess, MarkovProcess):
         state_space = _set_converter(state_space)
         if trans_probs != None:
             trans_probs = _matrix_checks(trans_probs)
-        return Basic.__new__(cls, sym, state_space, trans_probs)
+        obj = Basic.__new__(cls, sym, state_space, trans_probs)
+        obj.state2num = dict()
+        if isinstance(state_space, FiniteSet):
+            for i, state in enumerate(state_space):
+                obj.state2num[state] = i
+        return obj
 
     @property
     def transition_probabilities(self):
@@ -709,6 +727,10 @@ class DiscreteMarkovChain(DiscreteTimeStochasticProcess, MarkovProcess):
         return all((wi > 0) == True for wi in w.row(0))
 
     def is_absorbing_state(self, state):
+        if self.state2num:
+            state = self.state2num.get(state, None)
+            if state is None:
+                raise ValueError("%s state is not present %s"%(state, self))
         trans_probs = self.transition_probabilities
         if isinstance(trans_probs, ImmutableMatrix) and \
             state < trans_probs.shape[0]:
@@ -803,7 +825,12 @@ class ContinuousMarkovChain(ContinuousTimeStochasticProcess, MarkovProcess):
         state_space = _set_converter(state_space)
         if gen_mat != None:
             gen_mat = _matrix_checks(gen_mat)
-        return Basic.__new__(cls, sym, state_space, gen_mat)
+        obj = Basic.__new__(cls, sym, state_space, gen_mat)
+        obj.state2num = dict()
+        if isinstance(state_space, FiniteSet):
+            for i, state in enumerate(state_space):
+                obj.state2num[state] = i
+        return obj
 
     @property
     def generator_matrix(self):
